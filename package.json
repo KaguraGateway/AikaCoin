@@ -1,0 +1,23 @@
+{
+  "name": "aikacoin",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/ip": "^1.1.0",
+    "@types/node": "^14.14.28",
+    "@types/sqlite3": "^3.1.7",
+    "typescript": "^4.1.5"
+  },
+  "dependencies": {
+    "@kaguragateway/y-node-utils": "^1.0.18",
+    "ip": "^1.1.5",
+    "sqlite3": "^5.0.2"
+  }
+}

@@ -1,0 +1,1 @@
+export type WalletStatus = "active" | "suspend" | "ban";
