@@ -2,6 +2,7 @@ import { fileUtils } from "@kaguragateway/y-node-utils";
 import { generateKeyPair } from "crypto";
 import { readFileSync, writeFileSync } from "fs";
 import { AikaCoin } from "./AikaCoin";
+import { TransactionCommand } from "./blockchain/interfaces/ITransaction";
 import { Config } from "./Config";
 import { WalletTbl } from "./sql/sqlite/WalletTbl";
 import { HashUtils } from "./utils/HashUtils";
@@ -15,19 +16,20 @@ export class Wallet {
     /** ウォレットの秘密鍵（暗号化済み） */
     static walletEncryptedPrivateKey: string;
 
-    isCreateWallet = false;
+    static nonce: number = 0;
 
     init() {
-        return new Promise((resolve, reject) => {
-            if(AikaCoin.config.walletAddress.length === 0 || !fileUtils.isExistFile(AikaCoin.config.publicKeyPath) || !fileUtils.isExistFile(AikaCoin.config.privateKeyPath)) {
+        return new Promise(async(resolve, reject) => {
+            if(!fileUtils.isExistFile(AikaCoin.config.publicKeyPath)) {
                 console.log("NotFound My Wallet.");
                 console.log("ウォレットの公開鍵と秘密鍵を生成します。");
-
-                this.isCreateWallet = true;
 
                 AikaCoin.std.question("秘密鍵を守るパスワードを入力してください（A-Z a-z 0-9 *+-/!$%）", (answer) => {
                     this.generateWalletKeyPair(answer)
                     .then(() => {
+                        // ウォレット生成トランザクションを送信する
+                        AikaCoin.newTransaction("", 0, [TransactionCommand.CREATE_WALLET], answer);
+
                         resolve(null);
                     })
                 });
@@ -35,40 +37,32 @@ export class Wallet {
                 return;
             }
 
-            // ウォレットアドレスを適用
-            Wallet.walletAddress = AikaCoin.config.walletAddress;
             // ウォレットの公開鍵を読み込む
             Wallet.walletPublicKey = readFileSync(AikaCoin.config.publicKeyPath).toString();
             // ウォレットの秘密鍵を読み込む
-            Wallet.walletEncryptedPrivateKey = readFileSync(AikaCoin.config.privateKeyPath).toString();
+            if(fileUtils.isExistFile(AikaCoin.config.privateKeyPath))
+                Wallet.walletEncryptedPrivateKey = readFileSync(AikaCoin.config.privateKeyPath).toString();
+
+
+            // ウォレットアドレスを適用
+            if(AikaCoin.config.walletAddress.length === 0) {
+                AikaCoin.config.walletAddress = Wallet.generateWalletAddress(Wallet.walletPublicKey);
+                AikaCoin.config.save();
+            }
+            Wallet.walletAddress = AikaCoin.config.walletAddress;
+
+
+            // NonceをDBから取得
+            const myWalletRecord = await WalletTbl.selectWhereAddress(Wallet.walletAddress);
+            if(myWalletRecord == null)
+                return reject();
+
+            Wallet.nonce = myWalletRecord.nonce;
 
             console.log("Loaded Wallet Info.");
 
             resolve(null);
         })
-    }
-
-    /**
-     * ネットワークやデータベースの起動後に呼び出す
-     */
-    init2() {
-        if(this.isCreateWallet) {
-            // データベースにウォレットを登録する
-            WalletTbl.insert({
-                address: Wallet.walletAddress,
-                pubkey: Wallet.walletPublicKey,
-                balance: 0,
-                nonce: 0,
-                status: "active"
-            });
-
-            // ネットワークに知らせる
-            AikaCoin.network.notifyCreateWallet({
-                address: Wallet.walletAddress,
-                pubkey: Wallet.walletPublicKey,
-                status: "active"
-            });
-        }
     }
 
     /**
@@ -98,7 +92,7 @@ export class Wallet {
                 writeFileSync(AikaCoin.config.privateKeyPath, encryptedPrivatekey);
 
                 // ウォレットアドレスを生成する
-                Wallet.walletAddress = this.generateWalletAddress(publickey);
+                Wallet.walletAddress = Wallet.generateWalletAddress(publickey);
                 // コンフィグにも適用
                 AikaCoin.config.walletAddress = Wallet.walletAddress;
 
@@ -117,7 +111,7 @@ export class Wallet {
     }
 
     /** ウォレットアドレスを生成する */
-    generateWalletAddress(publicKey: string) {
+    public static generateWalletAddress(publicKey: string) {
         return "$0x$" + HashUtils.computeRIPEMD160(HashUtils.computeSHA256(PemUtils.getPublicKeyFromPem(Wallet.walletPublicKey)));
     }
 }

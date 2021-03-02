@@ -27,9 +27,8 @@ export class Config implements IConfig {
 
     /** P2Pのノード */
     mainNodes: Array<string> = [
+        "node://[240b:253:f021:a800:47e:37b0:229e:428e]:65300",
         "node://165.100.180.123:65300",
-        "node://165.100.180.123:65301",
-        "node://165.100.180.123:65302",
         "node://[240b:253:f021:a800:c054:66a9:6154:cfec]:65300"
     ];
 

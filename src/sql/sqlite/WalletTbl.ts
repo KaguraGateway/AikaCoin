@@ -13,12 +13,32 @@ export class WalletTbl {
                 db.run(`create table if not exists wallet (
                     address INT,
                     pubkey TEXT,
-                    balance INT,
+                    balance REAL,
                     nonce INT,
                     status TEXT
                 )`);
             });
             resolve(true);
+        });
+    }
+
+    static getAll(): Promise<Array<IWalletTbl>> {
+        return new Promise((resolve, reject) => {
+            const db = CoinDB.db;
+            if(db == null)
+                throw new Error("db is undefined.");
+
+            db.serialize(() => {
+                const stmt = db.prepare("SELECT * FROM wallet");
+                // 取得
+                stmt.all((err, rows) => {
+                    if(err)
+                        return reject(err);
+
+                    resolve(rows);
+                });
+                stmt.finalize();
+            });
         });
     }
 
@@ -40,22 +60,72 @@ export class WalletTbl {
         });
     }
 
-    static selectWhereAddress(address: string): Promise<Array<any>> {
+    static selectWhereAddress(address: string): Promise<IWalletTbl | null> {
         return new Promise((resolve, reject) => {
             const db = CoinDB.db;
             if(db == null)
                 throw new Error("db is undefined.");
 
             db.serialize(() => {
-                const stmt = db.prepare("SELECT * FROM wallet where address = ?");
+                const stmt = db.prepare("SELECT * FROM wallet where address = ? limit 1");
+
+                let resultRow: IWalletTbl | null;
+
                 // 取得
-                stmt.all(address, (err, rows) => {
+                stmt.each(address, (err, row) => {
                     if(err)
                         return reject(err);
 
-                    resolve(rows);
+                    resultRow = row;
+                }, (err) => {
+                    resolve(resultRow);
                 });
                 stmt.finalize();
+            });
+        });
+    }
+
+    /**
+     * addressからWalletを探す（トランザクション用）
+     * @param address
+     */
+    static selectWhereAddressNonSerialized(address: string): Promise<IWalletTbl | null> {
+        return new Promise((resolve, reject) => {
+            const db = CoinDB.db;
+            if(db == null)
+                throw new Error("db is undefined.");
+
+            const stmt = db.prepare("SELECT * FROM wallet where address = ? limit 1");
+
+            let resultRow: IWalletTbl | null;
+
+            // 取得
+            stmt.each(address, (err, row) => {
+                if(err)
+                    return reject(err);
+
+                resultRow = row;
+            }, (err) => {
+                resolve(resultRow);
+            });
+            stmt.finalize();
+        });
+    }
+
+    static updateBalanceAndNonceWhereAddressNonSerialized(address: string, balance: number, nonce: number): Promise<null> {
+        return new Promise((resolve, reject) => {
+            const db = CoinDB.db;
+            if(db == null)
+                throw new Error("db is undefined.");
+
+            const stmt = db.prepare("UPDATE wallet SET balance = ? , nonce = ? where address = ?");
+            stmt.run([balance, nonce, address]);
+
+            stmt.finalize((err) => {
+                if(err)
+                    return reject(err);
+
+                resolve(null);
             });
         });
     }

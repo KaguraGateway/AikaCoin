@@ -12,6 +12,7 @@ export interface IFoundBlockHash {
     nonce: number;
     previousHash: string;
     merkleRootHash: string;
+    stateRootHash: string;
     miner: string;
     transactions: Array<ITransaction>
 }

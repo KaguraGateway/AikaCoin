@@ -2,7 +2,6 @@ import { objectUtils } from "@kaguragateway/y-node-utils";
 import { AikaCoin } from "../AikaCoin";
 import { SignUtils } from "../utils/SignUtils";
 import { Wallet } from "../Wallet";
-import { ICreateWallet } from "./packet/ICreateWallet";
 import { IFoundBlockHash } from "./packet/IFoundBlockHash";
 import { PeerToPeerService } from "./PeerToPeerService";
 import os from "os";
@@ -13,9 +12,11 @@ import { HashUtils } from "../utils/HashUtils";
 import { BlockDat } from "../dat/BlockDat";
 import path from "path";
 import { IRequestBlocks } from "./packet/IRequestBlocks";
+import { INewTransaction } from "./packet/INewTransaction";
+import { Transaction } from "../blockchain/Transaction";
+import { TransactionStatus } from "../blockchain/interfaces/ITransaction";
 
 export const AikaCoinOpCode = {
-    CREATE_WALLET: 0x0,
     FOUND_BLOCK_HASH: 0x1,
     NEW_TRANSACTION: 0x2,
     REQUEST_NODES_LIST: 0x3,
@@ -109,26 +110,7 @@ export class AikaCoinNetwork {
         }), "utf-8"));
     }
 
-    /** 新しいウォレットが生成された */
-    private onCreateWallet(payload: Buffer) {
-        (async() => {
-            // JSONパース
-            const obj: ICreateWallet = JSON.parse(payload.toString("utf-8"));
-            // データベースにすでにあるか
-            const walletNum = await WalletTbl.countWhereWalletAddress(obj.address);
-            // 0個なら登録
-            if(walletNum === 0) {
-                WalletTbl.insert({
-                    address: obj.address,
-                    pubkey: obj.pubkey,
-                    balance: 0,
-                    nonce: 0,
-                    status: obj.status
-                });
-            }
-        })();
-    }
-    /** 誰かがマイニングに成功した、トランザクション */
+    /** 誰かがマイニングに成功した */
     private async onFoundBlockHash(remoteAddr: string, remotePort: number, payload: Buffer) {
         // JSONパース
         const obj: IFoundBlockHash = JSON.parse(payload.toString("utf-8"));
@@ -184,8 +166,10 @@ export class AikaCoinNetwork {
                 nonce: obj.nonce,
                 previousHash: obj.previousHash,
                 merkleRootHash: obj.merkleRootHash,
+                stateRootHash: obj.stateRootHash,
                 miner: obj.miner,
-                transactions: obj.transactions
+                transactions: obj.transactions,
+                mainchain: true
             }, blockOffset);
             // DATファイルを保存
             dat.save();
@@ -255,6 +239,7 @@ export class AikaCoinNetwork {
                     nonce: record.nonce,
                     previousHash: record.previousHash,
                     merkleRootHash: record.merkleRootHash,
+                    stateRootHash: record.stateRootHash,
                     miner: record.miner,
                     transactions: record.transactions,
 
@@ -266,64 +251,25 @@ export class AikaCoinNetwork {
         }, 200);
     }
 
-    private async onRequestWallets(payload: Buffer) {
+    private onNewTransaction(remoteAddr: string, remotePort: number, payload: Buffer) {
         // JSONパース
-        const obj: IRequestBlocks = JSON.parse(payload.toString("utf-8"));
+        const obj: INewTransaction = JSON.parse(payload.toString("utf-8"));
 
-        // どこのブロックまで知っているのか
-        const knowBlock = await BlocksTbl.selectWhereBlockHash(obj.blockhash);
+        // トランザクションプールに追加
+        AikaCoin.blockChain.transactionPool.push(new Transaction(
+            obj.to,
+            Wallet.generateWalletAddress(obj.fromPubKey),
+            obj.fromPubKey,
+            obj.amount,
+            obj.signature,
+            obj.commands,
+            obj.nonce,
+            TransactionStatus.PENDDING
+        ));
 
-        let knowBlockHeight=0;
-
-        // 取得できたか
-        if(knowBlock.length > 0) {
-            // どこの高さか
-            knowBlockHeight = knowBlock[0].height;
-        }
-
-        // 知っていないブロックのデータを取得
-        const blocks = await BlocksTbl.selectWhereBlockHeightAfter(knowBlockHeight);
-
-        let i=0, datCache: {[key: number]: BlockDat} = {};
-
-        // 過去のブロックを送信する
-        const loop = setInterval(() => {
-            if(i < blocks.length) {
-                clearInterval(loop);
-                return;
-            }
-
-            // ブロック
-            const block = blocks[i];
-
-            // DATファイルを開く
-            if(datCache[block.dat] == null)
-                datCache[block.dat] = new BlockDat(path.join(AikaCoin.blocksPath, `${block.dat}.dat`));
-            // 読み込む
-            const record = datCache[block.dat].read(block.offset);
-
-            // 読み込みできたなら送る
-            if(record != null) {
-                this.notifyFoundBlockHash({
-                    blockVersion: record.blockVersion,
-                    blockhash: record.blockhash,
-                    height: record.height,
-                    timestamp: record.timestamp,
-                    difficult: record.difficult,
-                    nonce: record.nonce,
-                    previousHash: record.previousHash,
-                    merkleRootHash: record.merkleRootHash,
-                    miner: record.miner,
-                    transactions: record.transactions,
-
-                    isPrivate: true
-                });
-            }
-
-            i++;
-        }, 200);
+        // 他のノードに送信する
+        this.broadcastExcludeNode(remoteAddr, remotePort, AikaCoinOpCode.FOUND_BLOCK_HASH, payload);
     }
-
 
     private onData(data: Buffer, remoteAddr: string, remotePort: number) {
         // OpCodeを取得
@@ -334,16 +280,11 @@ export class AikaCoinNetwork {
         switch(opcode) {
             // 新しいトランザクション（取引）
             case AikaCoinOpCode.NEW_TRANSACTION:
+                this.onNewTransaction(remoteAddr, remotePort, payload);
                 break;
             // 新しいブロックが生成された
             case AikaCoinOpCode.FOUND_BLOCK_HASH:
                 this.onFoundBlockHash(remoteAddr, remotePort, payload);
-                break;
-            // 新しいウォレットが生成された
-            case AikaCoinOpCode.CREATE_WALLET:
-                this.onCreateWallet(payload);
-                // 内容をそのままネットワークに流す
-                this.broadcastExcludeNode(remoteAddr, remotePort, opcode, payload);
                 break;
             // ノードリストをリクエスト
             case AikaCoinOpCode.REQUEST_NODES_LIST:
@@ -430,11 +371,8 @@ export class AikaCoinNetwork {
         return false;
     }
 
-    /**
-     * 新しいウォレットをつくったことをネットワークに知らせる
-     */
-    notifyCreateWallet(data: ICreateWallet) {
-        return this.broadcast(AikaCoinOpCode.CREATE_WALLET, Buffer.from(JSON.stringify(data), "utf-8"));
+    notifyNewTransaction(data: INewTransaction) {
+        return this.broadcast(AikaCoinOpCode.NEW_TRANSACTION, Buffer.from(JSON.stringify(data), "utf-8"));
     }
 
     notifyFoundBlockHash(data: IFoundBlockHash) {

@@ -1,6 +1,8 @@
 import { fileUtils } from "@kaguragateway/y-node-utils";
 import { readFileSync, writeFileSync } from "fs";
-import { ITransaction } from "../blockchain/interfaces/ITransaction";
+import path from "path";
+import { AikaCoin } from "../AikaCoin";
+import { ITransaction, TransactionCommand } from "../blockchain/interfaces/ITransaction";
 
 
 export interface IBlockRecord {
@@ -12,20 +14,27 @@ export interface IBlockRecord {
     nonce: number;
     previousHash: string;
     merkleRootHash: string;
+    stateRootHash: string;
     miner: string;
     transactions: Array<ITransaction>;
+
+    mainchain: boolean;
 }
 
 export class FatalDataLocked extends Error {}
 
 export class BlockDat {
     private static readonly datVersion: number = 1;
-    private static readonly datRecordLen: number = 460;
+    private static readonly datRecordLen: number = 511;
     private static  readonly headerLen = 8;
     /** DATの長さ（8はファイルのヘッダーサイズ） */
     private static readonly datLen: number = 64000000 + BlockDat.headerLen;
 
-    private static readonly txLen: number = 512;
+    //private static readonly txLen: number = 516;
+    /** トランザクションの固定の長さ（commandsを含まない長さ） */
+    private static readonly txFixedLen: number = 522;
+    /** commandsの長さ */
+    private static readonly txCmdFixedLen: number = 4;
 
     private filePath: string;
     private buf: Buffer;
@@ -54,8 +63,8 @@ export class BlockDat {
      */
     read(offset: number) {
         // レコードの長さを超えてないか？
-        if((offset + BlockDat.datRecordLen) > this.recordsBuf.length)
-            return null;
+        // if((offset + BlockDat.datRecordLen) > this.recordsBuf.length)
+        //     return null;
 
         // レコードのサイズを取得
         const recordSize = this.recordsBuf.readUInt16BE(offset);
@@ -72,42 +81,72 @@ export class BlockDat {
         const nonce = recordBuf.readDoubleBE(180);
         const previousHash = recordBuf.slice(244, 308).toString("utf-8");
         const merkleRootHash = recordBuf.slice(308, 372).toString("utf-8");
-        const minerLen = recordBuf.readUInt16BE(372);
-        const miner = recordBuf.slice(388, 388+minerLen).toString("utf-8");
+        const stateRootHash = recordBuf.slice(372, 436).toString("utf-8");
+        const minerLen = recordBuf.readUInt16BE(436);
+        const miner = recordBuf.slice(438, 438+minerLen).toString("utf-8");
+
+        // フラグを読み取る
+        const flags = recordBuf.readInt8(502);
+        // メインチェーンか読み取る
+        const mainchain = (flags & 0x1) ? true : false;
 
         // トランザクション数を取得
-        const txNum = recordBuf.readUInt32BE(452);
+        const txNum = recordBuf.readUInt32BE(503);
         // トランザクションサイズを取得
-        const txSize = recordBuf.readUInt32BE(456);
+        const txsSize = recordBuf.readUInt32BE(507);
 
         // トランザクションレコードを取得
-        const txBuf = recordBuf.slice(BlockDat.datRecordLen, BlockDat.datRecordLen+txSize);
+        const txBuf = recordBuf.slice(BlockDat.datRecordLen, BlockDat.datRecordLen+txsSize);
 
         // トランザクション用変数
         const transactions: Array<ITransaction> = [];
         // トランザクションを取得
-        for(let i=0; i < txNum; i++) {
-            const offset = i * BlockDat.txLen;
-
-            const transactionVersion = txBuf.readUInt16BE(0 + offset);
+        for(let i=0, txOffset=0; i < txNum; i++) {
+            const transactionVersion = txBuf.readUInt16BE(0 + txOffset);
+            const txSize = txBuf.readUInt16BE(2 + txOffset)
 
             const toLen = txBuf.readUInt16BE(4);
-            const to = txBuf.slice(6 + offset, 6 + toLen + offset).toString("utf-8");
+            const to = txBuf.slice(6 + txOffset, 6 + toLen + txOffset).toString("utf-8");
 
             const fromLen = txBuf.readUInt16BE(70);
-            const from = txBuf.slice(72 + offset, 72 + fromLen + offset).toString("utf-8");
+            const from = txBuf.slice(72 + txOffset, 72 + fromLen + txOffset).toString("utf-8");
 
-            const fromPubKeySize = txBuf.readUInt16BE(136 + offset);
-            const fromPubKey = txBuf.slice(138 + offset, 138 + fromPubKeySize + offset).toString("utf-8");
-            const amount = txBuf.readDoubleBE(266 + offset);
-            const signatureLen = txBuf.readUInt16BE(330 + offset);
-            const signature = txBuf.slice(332 + offset, 332 + signatureLen + offset).toString("utf-8");
+            const fromPubKeySize = txBuf.readUInt16BE(136 + txOffset);
+            const fromPubKey = txBuf.slice(138 + txOffset, 138 + fromPubKeySize + txOffset).toString("utf-8");
+            const amount = txBuf.readDoubleBE(266 + txOffset);
 
-            transactions.push({transactionVersion, to, from, fromPubKey, amount, signature});
+            const signatureLen = txBuf.readUInt16BE(330 + txOffset);
+            const signature = txBuf.slice(332 + txOffset, 332 + signatureLen + txOffset).toString("utf-8");
+
+            const nonce = txBuf.readUInt32BE(512 + txOffset);
+            const status = txBuf.readUInt16BE(516);
+
+            const commandsNum = txBuf.readUInt16BE(518 + txOffset);
+            const commandsLen = txBuf.readUInt16BE(520 + txOffset);
+            const commandsBuf = txBuf.slice(BlockDat.txFixedLen + txOffset, BlockDat.txFixedLen + commandsLen + txOffset);
+
+            const commands: Array<TransactionCommand> = [];
+
+            // コマンドを取得
+            for(let j=0, cmdOffset=txOffset; j < commandsNum; j++) {
+                // コマンド１つ取得
+                const commandBuf = commandsBuf.slice(cmdOffset, cmdOffset + BlockDat.txCmdFixedLen);
+
+                // コマンド
+                const cmdOpcode = commandBuf.readUInt16BE(2);
+                // 追加
+                commands.push(cmdOpcode);
+
+                cmdOffset += BlockDat.txCmdFixedLen;
+            }
+
+            transactions.push({transactionVersion, to, from, fromPubKey, amount, signature, nonce, status, commands});
+
+            txOffset += txSize;
         }
 
         // 返すやつ
-        const record: IBlockRecord = {blockVersion, blockhash, height, timestamp, difficult, nonce, previousHash, merkleRootHash, miner, transactions};
+        const record: IBlockRecord = {blockVersion, blockhash, height, timestamp, difficult, nonce, previousHash, merkleRootHash, stateRootHash, miner, transactions, mainchain};
 
         return record;
     }
@@ -119,15 +158,20 @@ export class BlockDat {
 
         this.isLock = true;
 
-        const txBuf = Buffer.alloc(BlockDat.txLen * record.transactions.length);
+        // トランザクションリスト全体のサイズ（１つのトランザクションのサイズは可変です）
+        const txsSize = BlockDat.calculateTxsSize(record.transactions);
+        // Bufferを生成
+        const txBuf = Buffer.alloc(txsSize);
 
         // トランザクションを変換
-        for(let i=0; i < record.transactions.length; i++) {
+        for(let i=0, bufOffset=0; i < record.transactions.length; i++) {
             const tx = record.transactions[i];
-            const bufOffset = i * BlockDat.txLen;
+
+            // このトランザクションの長さを計算
+            const txSize = BlockDat.txFixedLen + (BlockDat.txCmdFixedLen * tx.commands.length);
 
             txBuf.writeUInt16BE(tx.transactionVersion, 0 + bufOffset);
-            txBuf.writeInt16BE(BlockDat.txLen, 2 + bufOffset);
+            txBuf.writeInt16BE(txSize, 2 + bufOffset);
 
             txBuf.writeUInt16BE(tx.to.length, 4 + bufOffset);
             txBuf.write(tx.to, 6 + bufOffset, 6 + tx.to.length + bufOffset, "utf-8");
@@ -139,6 +183,26 @@ export class BlockDat {
             txBuf.writeDoubleBE(tx.amount, 266 + bufOffset);
             txBuf.writeUInt16BE(tx.signature.length, bufOffset + 330);
             txBuf.write(tx.signature, 332 + bufOffset, 332 + tx.signature.length + bufOffset, "utf-8");
+
+            txBuf.writeUInt32BE(tx.nonce, 512 + bufOffset);
+            txBuf.writeUInt16BE(tx.status, 516 + bufOffset);
+            txBuf.writeUInt16BE(tx.commands.length, 518 + bufOffset);
+            txBuf.writeUInt16BE((tx.commands.length * BlockDat.txCmdFixedLen), 520 + bufOffset);
+
+            // コマンドを書き込む
+            for(let j=0, cmdOffset=(bufOffset + BlockDat.txFixedLen); j < tx.commands.length; j++) {
+                // 取得
+                const cmd = tx.commands[j];
+
+                // コマンドバージョン
+                txBuf.writeInt16BE(1, 0 + cmdOffset);
+                // コマンドコード
+                txBuf.writeInt16BE(cmd, 2 + cmdOffset);
+
+                cmdOffset += BlockDat.txCmdFixedLen;
+            }
+
+            bufOffset += txSize;
         }
 
         // 中身
@@ -155,10 +219,16 @@ export class BlockDat {
         recordBuf.writeDoubleBE(record.nonce, 180);
         recordBuf.write(record.previousHash, 244, 308, "utf-8");
         recordBuf.write(record.merkleRootHash, 308, 372, "utf-8");
-        recordBuf.writeUInt16BE(record.miner.length, 372);
-        recordBuf.write(record.miner, 388, 388 + record.miner.length, "utf-8");
-        recordBuf.writeUInt32BE(record.transactions.length, 452);
-        recordBuf.writeUInt32BE(txBuf.length, 456);
+        recordBuf.write(record.stateRootHash, 372, 436, "utf-8");
+        recordBuf.writeUInt16BE(record.miner.length, 436);
+        recordBuf.write(record.miner, 438, 438 + record.miner.length, "utf-8");
+
+        // フラグ
+        const mainchain = record.mainchain ? 1 : 0;
+        recordBuf.writeInt8(mainchain, 502);
+
+        recordBuf.writeUInt32BE(record.transactions.length, 503);
+        recordBuf.writeUInt32BE(txBuf.length, 507);
 
         // レコードバッファに書き込む
         for(let i=0; i < txBuf.length; i++) {
@@ -195,8 +265,22 @@ export class BlockDat {
         }
     }
 
+    static calculateTxsCmdSize(transactions: Array<ITransaction>) {
+        let cmdSize = 0;
+
+        for(const tx of transactions) {
+            cmdSize += tx.commands.length * this.txCmdFixedLen;
+        }
+
+        return cmdSize;
+    }
+
+    static calculateTxsSize(transactions: Array<ITransaction>) {
+        return transactions.length * BlockDat.txFixedLen + this.calculateTxsCmdSize(transactions);
+    }
+
     static calculateBlockSize(transactions: Array<ITransaction>) {
-        return BlockDat.datRecordLen + (transactions.length * BlockDat.txLen);
+        return BlockDat.datRecordLen + (this.calculateTxsSize(transactions));
     }
 
     static getFileIdByPreviousBlock(blockSize: number, previousBlockDatId: number, previousBlockOffset: number, previousBlockSize: number) {
@@ -213,5 +297,9 @@ export class BlockDat {
             return previousBlockOffset + previousBlockSize;
 
         return 0;
+    }
+
+    static getFilePath(datId: number) {
+        return path.join(AikaCoin.blocksPath, `${datId}.dat`);
     }
 }

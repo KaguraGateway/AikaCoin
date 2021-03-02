@@ -1,5 +1,7 @@
 import { WorkerMaster } from "../cluster/WorkerMaster";
+import { IWalletTbl } from "../sql/interface/IWalletTbl";
 import { HashUtils } from "../utils/HashUtils";
+import { MerkleTree } from "../utils/MerkleTree";
 import { ITransaction } from "./interfaces/ITransaction";
 import { Pow } from "./Pow";
 
@@ -12,26 +14,44 @@ export class Block {
     nonce: number = -1;
     previousHash: string;
     timestamp: number;
+
     transactionPool: Array<ITransaction>;
+    statePool: Array<IWalletTbl>;
+
     transactionNum: number;
     merkleRootHash: string = "";
+    stateRootHash: string = "";
     /** Hashの先頭から何文字が0である必要があるか（※BitCoinとは仕様が違います） */
     difficult: number;
 
-    selfHash: string | null = null;
+    selfHash: string = "";
 
-    constructor(blockHeight: number, previousHash: string, timestamp: number, transactionPool: Array<ITransaction>, difficult: number) {
+    constructor(blockHeight: number, previousHash: string, timestamp: number, transactionPool: Array<ITransaction>, statePool: Array<IWalletTbl>, difficult: number) {
         this.blockHeight = blockHeight;
         this.previousHash = previousHash;
         this.timestamp = timestamp;
         this.transactionPool = transactionPool;
+        this.statePool = statePool;
         this.transactionNum = transactionPool.length;
         this.difficult = difficult;
     }
 
     async computeSelfHash() {
-        const transactionPoolText = JSON.stringify(this.transactionPool);
-        this.merkleRootHash = HashUtils.computeSHA256(transactionPoolText);
+        // マークルツリー
+        const merkleRoot = [];
+        for(const tx of this.transactionPool) {
+            const transactionHash = HashUtils.computeSHA256(tx.transactionVersion + tx.to + tx.from + tx.fromPubKey + tx.amount);
+            merkleRoot.push(transactionHash);
+        }
+        this.merkleRootHash = (new MerkleTree()).createTree(merkleRoot) || "NULL";
+
+        // ステートを計算
+        const stateRoot = [];
+        for(const w of this.statePool) {
+            const hash = HashUtils.computeSHA256(w.address + w.balance + w.nonce + w.pubkey + w.status);
+            stateRoot.push(hash);
+        }
+        this.stateRootHash = (new MerkleTree()).createTree(stateRoot);
 
         // 送信する内容を準備する
         const {blockHeight, blockVersion, previousHash, merkleRootHash, timestamp, difficult} = this;

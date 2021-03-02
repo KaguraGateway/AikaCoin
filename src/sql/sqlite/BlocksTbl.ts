@@ -85,6 +85,29 @@ export class BlocksTbl {
         });
     }
 
+    static selectWhereBlockHeightMinusTenNonSerialized(currentBlockHeight: number): Promise<IBlocksTbl | null> {
+        return new Promise((resolve, reject) => {
+            const db = CoinDB.db;
+            if(db == null)
+                throw new Error("db is undefined");
+
+            const blockHeight = currentBlockHeight - 10;
+            if(blockHeight <= 0)
+                return resolve(null);
+
+            const stmt = db.prepare("select * from blocks where height = ? limit 1");
+            stmt.each(blockHeight, (err, row) => {
+                resolve(row);
+            }, (err, count) => {
+                if(err)
+                    return reject(err);
+                if(count == 0)
+                    return resolve(null);
+            });
+            stmt.finalize();
+        });
+    }
+
     static selectWhereLastBlock(): Promise<IBlocksTbl | null> {
         return new Promise((resolve, reject) => {
             const db = CoinDB.db;

@@ -12,6 +12,7 @@ import { CoinDB } from "./sql/CoinDB";
 import { PeerToPeerService } from "./p2p/PeerToPeerService";
 import { AikaCoinNetwork } from "./p2p/AikaCoinNetwork";
 import { WalletTbl } from "./sql/sqlite/WalletTbl";
+import { TransactionCommand } from "./blockchain/interfaces/ITransaction";
 
 export class AikaCoin {
     /** AikaCoin プロトコルバージョン */
@@ -59,11 +60,6 @@ export class AikaCoin {
         AikaCoin.coinDb = new CoinDB();
         await AikaCoin.coinDb.init(AikaCoin.config.sqlitePath);
 
-        // ウォレット
-        AikaCoin.wallet = new Wallet();
-        // ウォレットを読み込む
-        await AikaCoin.wallet.init();
-
         // P2P起動
         AikaCoin.network = new AikaCoinNetwork(AikaCoin.config.port);
         AikaCoin.network.start();
@@ -71,16 +67,19 @@ export class AikaCoin {
         // ブロックチェーンシステムを起動
         AikaCoin.blockChain = new BlockChain();
 
+        // ウォレット
+        AikaCoin.wallet = new Wallet();
+        // ウォレットを読み込む
+        await AikaCoin.wallet.init();
+
+
 
         /**
          * 準備パート２
          */
-        // ウォレットのデータを同期
-        AikaCoin.wallet.init2();
         // ブロックチェーンのデータを同期
         await AikaCoin.blockChain.init();
 
-        // 前回までの状態を読み込むようにする
         this.mining()
         .catch((e) => {
             console.log(e);
@@ -96,25 +95,31 @@ export class AikaCoin {
         });
     }
 
-    /**
-     * 送金する
-     */
-    async transferCoin(toAddress: string, amount: number) {
-    }
-
-    testTransaction() {
-        // 自動トランザクション
-        setInterval(() => {
-            //console.log("New Transaction");
-            const transaction = Transaction.createNewTransaction(
-                generateString(64),
-                Wallet.walletAddress,
-                Wallet.walletPublicKey,
-                500,
-                Wallet.walletEncryptedPrivateKey,
-                "paon"
-            )
-            AikaCoin.blockChain.transactionPool.push(transaction);
-        }, 1000);
+    static newTransaction(to: string, amount: number, commands: TransactionCommand[], privateKeyPassword: string) {
+        // ウォレットノンスを増やす
+        Wallet.nonce++;
+        // トランザクションを生成する
+        const transaction = Transaction.createNewTransaction(
+            to,
+            Wallet.walletAddress,
+            Wallet.walletPublicKey,
+            amount,
+            commands,
+            Wallet.nonce,
+            Wallet.walletEncryptedPrivateKey,
+            privateKeyPassword
+        );
+        // トランザクションプールに追加
+        AikaCoin.blockChain.transactionPool.push(transaction);
+        // ネットワークで主張
+        AikaCoin.network.notifyNewTransaction({
+            transactionVersion: transaction.transactionVersion,
+            to: transaction.to,
+            fromPubKey: transaction.fromPubKey,
+            amount: transaction.amount,
+            signature: transaction.signature,
+            nonce: transaction.nonce,
+            commands: transaction.commands
+        });
     }
 }
