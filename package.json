@@ -2,7 +2,7 @@
   "name": "aikacoin",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "./build/bootstrap.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -13,15 +13,18 @@
     "@types/ip": "^1.1.0",
     "@types/leveldown": "^4.0.2",
     "@types/levelup": "^4.3.0",
-    "@types/node": "^14.14.28",
+    "@types/node": "^14.14.31",
     "@types/sqlite3": "^3.1.7",
-    "typescript": "^4.1.5"
+    "electron": "^12.0.0",
+    "typescript": "^4.2.3"
   },
   "dependencies": {
-    "@kaguragateway/y-node-utils": "^1.0.18",
+    "@kaguragateway/y-node-utils": "^1.0.19",
     "ip": "^1.1.5",
     "leveldown": "^5.6.0",
     "levelup": "^4.4.0",
+    "log4js": "^6.3.0",
+    "nodejs-traceroute": "^1.2.0",
     "sqlite3": "^5.0.2"
   }
 }

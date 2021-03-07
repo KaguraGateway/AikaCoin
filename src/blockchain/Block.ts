@@ -40,8 +40,7 @@ export class Block {
         // マークルツリー
         const merkleRoot = [];
         for(const tx of this.transactionPool) {
-            const transactionHash = HashUtils.computeSHA256(tx.transactionVersion + tx.to + tx.from + tx.fromPubKey + tx.amount);
-            merkleRoot.push(transactionHash);
+            merkleRoot.push(tx.transactionHash);
         }
         this.merkleRootHash = (new MerkleTree()).createTree(merkleRoot) || "NULL";
 
@@ -52,6 +51,7 @@ export class Block {
             stateRoot.push(hash);
         }
         this.stateRootHash = (new MerkleTree()).createTree(stateRoot);
+        console.log(`stateRoot: ${this.stateRootHash}`);
 
         // 送信する内容を準備する
         const {blockHeight, blockVersion, previousHash, merkleRootHash, timestamp, difficult} = this;
@@ -59,14 +59,23 @@ export class Block {
         // nonceアルゴリズム
         // MAX_INTERGERの半分
         const halfMaxSafeInt = Math.round(Number.MAX_SAFE_INTEGER / 2);
+        // MAX_INTERGERの1/4
+        const quarterMaxSafeInt = Math.round(Number.MAX_SAFE_INTEGER / 4);
+        // MIN_INTEGERの半分
+        const halfMinSafeInt = Math.round(Number.MIN_SAFE_INTEGER / 2);
         const nonceRanges: Array<number> = [
             0,
             (halfMaxSafeInt),
+            (quarterMaxSafeInt),
+            (halfMinSafeInt),
             Number.MIN_SAFE_INTEGER
         ];
 
         // 計算を開始する
         const result = await WorkerMaster.computeSelfHash({blockVersion, blockHeight, previousHash, merkleRootHash, timestamp, difficult, nonceRanges});
+        if(result == null)
+            return null;
+
         // nonce を適用
         this.nonce = result.nonce;
         // ハッシュを適用
@@ -91,5 +100,10 @@ export class Block {
         }
 
         return {selfHash, nonce};
+    }
+
+    setSelfHash(selfHash: string) {
+        this.selfHash = selfHash;
+        return this;
     }
 }

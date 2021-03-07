@@ -14,7 +14,8 @@ export class BlocksTbl {
                     height int,
                     dat int,
                     offset int,
-                    size int
+                    size int,
+                    previousHash text
                 )`);
             });
             resolve(true);
@@ -45,24 +46,27 @@ export class BlocksTbl {
                 throw new Error("db is undefined.");
 
             db.serialize(() => {
-                const stmt = db.prepare("insert into blocks values (?,?,?,?,?)");
-                stmt.run([record.blockhash, record.height, record.dat, record.offset, record.size]);
+                const stmt = db.prepare("insert into blocks values (?,?,?,?,?,?)");
+                stmt.run([record.blockhash, record.height, record.dat, record.offset, record.size, record.previousHash]);
                 stmt.finalize();
             });
             resolve(true);
         });
     }
 
-    static selectWhereBlockHash(blockhash: string): Promise<Array<IBlocksTbl>> {
+    static selectWhereBlockHash(blockhash: string): Promise<IBlocksTbl | null> {
         return new Promise((resolve, reject) => {
             const db = CoinDB.db;
             if(db == null)
                 throw new Error("db is undefined");
 
             db.serialize(() => {
-                const stmt = db.prepare("select * from blocks where blockhash = ?");
+                const stmt = db.prepare("select * from blocks where blockhash = ? limit 1");
                 stmt.all(blockhash, (err, rows) => {
-                    resolve(rows);
+                    if(rows.length === 0)
+                        resolve(null);
+
+                    resolve(rows[0]);
                 });
                 stmt.finalize();
             });

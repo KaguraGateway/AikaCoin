@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { AikaCoin } from "../AikaCoin";
 import { ITransaction, TransactionCommand } from "../blockchain/interfaces/ITransaction";
+import { IDatInfo } from "../leveldb/IDatInfo";
 
 
 export interface IBlockRecord {
@@ -16,9 +17,8 @@ export interface IBlockRecord {
     merkleRootHash: string;
     stateRootHash: string;
     miner: string;
-    transactions: Array<ITransaction>;
-
     mainchain: boolean;
+    transactions: Array<ITransaction>;
 }
 
 export class FatalDataLocked extends Error {}
@@ -32,7 +32,7 @@ export class BlockDat {
 
     //private static readonly txLen: number = 516;
     /** トランザクションの固定の長さ（commandsを含まない長さ） */
-    private static readonly txFixedLen: number = 522;
+    private static readonly txFixedLen: number = 652;
     /** commandsの長さ */
     private static readonly txCmdFixedLen: number = 4;
 
@@ -119,10 +119,14 @@ export class BlockDat {
             const signature = txBuf.slice(332 + txOffset, 332 + signatureLen + txOffset).toString("utf-8");
 
             const nonce = txBuf.readUInt32BE(512 + txOffset);
-            const status = txBuf.readUInt16BE(516);
+            const status = txBuf.readUInt16BE(516 + txOffset);
 
-            const commandsNum = txBuf.readUInt16BE(518 + txOffset);
-            const commandsLen = txBuf.readUInt16BE(520 + txOffset);
+            const fee = txBuf.readDoubleBE(518 + txOffset);
+            const hashLen = txBuf.readUInt16BE(582 + txOffset);
+            const transactionHash = txBuf.slice(584 + txOffset, 584 + hashLen + txOffset).toString("utf-8");
+
+            const commandsNum = txBuf.readUInt16BE(648 + txOffset);
+            const commandsLen = txBuf.readUInt16BE(650 + txOffset);
             const commandsBuf = txBuf.slice(BlockDat.txFixedLen + txOffset, BlockDat.txFixedLen + commandsLen + txOffset);
 
             const commands: Array<TransactionCommand> = [];
@@ -140,7 +144,7 @@ export class BlockDat {
                 cmdOffset += BlockDat.txCmdFixedLen;
             }
 
-            transactions.push({transactionVersion, to, from, fromPubKey, amount, signature, nonce, status, commands});
+            transactions.push({transactionVersion, to, from, fromPubKey, amount, signature, nonce, status, fee, transactionHash, commands});
 
             txOffset += txSize;
         }
@@ -186,8 +190,13 @@ export class BlockDat {
 
             txBuf.writeUInt32BE(tx.nonce, 512 + bufOffset);
             txBuf.writeUInt16BE(tx.status, 516 + bufOffset);
-            txBuf.writeUInt16BE(tx.commands.length, 518 + bufOffset);
-            txBuf.writeUInt16BE((tx.commands.length * BlockDat.txCmdFixedLen), 520 + bufOffset);
+            txBuf.writeDoubleBE(tx.fee, 518 + bufOffset);
+
+            txBuf.writeUInt16BE(tx.transactionHash.length, 582 + bufOffset);
+            txBuf.write(tx.transactionHash, 584 + bufOffset, 584 + tx.transactionHash.length + bufOffset, "utf-8");
+
+            txBuf.writeUInt16BE(tx.commands.length, 648 + bufOffset);
+            txBuf.writeUInt16BE((tx.commands.length * BlockDat.txCmdFixedLen), 650 + bufOffset);
 
             // コマンドを書き込む
             for(let j=0, cmdOffset=(bufOffset + BlockDat.txFixedLen); j < tx.commands.length; j++) {
@@ -265,6 +274,33 @@ export class BlockDat {
         }
     }
 
+    /**
+     * 一番最後に記入する
+     * @param record
+     */
+    static async writeLast(record: IBlockRecord) {
+        // BlockDat情報を取得
+        const datInfo = await AikaCoin.datInfo.getDatInfo();
+        // ブロックのサイズを計算
+        const nextBlockSize = BlockDat.calculateBlockSize(record.transactions);
+        // 次のDatファイルのIDを取得
+        const nextDatId = BlockDat.getNextFileId(nextBlockSize, datInfo);
+        // オフセットを計算する
+        const nextOffset = BlockDat.calculateOffset(nextDatId, datInfo.lastFileId, datInfo.lastOffset, datInfo.lastLength);
+
+        // DATファイルを開く
+        const dat = new BlockDat(BlockDat.getFilePath(nextDatId));
+        // DATファイルに保存する
+        const {offset, blockSize} = dat.write(record, nextOffset);
+        // DATファイルを保存する
+        dat.save();
+
+        // DAT情報を保存する
+        await AikaCoin.datInfo.putDatInfo({lastFileId: nextDatId, lastOffset: nextOffset, lastLength: nextBlockSize});
+
+        return {offset, blockSize, nextDatId};
+    }
+
     static calculateTxsCmdSize(transactions: Array<ITransaction>) {
         let cmdSize = 0;
 
@@ -283,13 +319,13 @@ export class BlockDat {
         return BlockDat.datRecordLen + (this.calculateTxsSize(transactions));
     }
 
-    static getFileIdByPreviousBlock(blockSize: number, previousBlockDatId: number, previousBlockOffset: number, previousBlockSize: number) {
-        const last = previousBlockOffset + previousBlockSize + blockSize;
+    static getNextFileId(blockSize: number, datInfo: IDatInfo) {
+        const last = datInfo.lastLength + blockSize;
 
         if(last > BlockDat.datLen)
-            return (previousBlockDatId+1);
+            return (datInfo.lastFileId+1);
 
-        return previousBlockDatId;
+        return datInfo.lastFileId;
     }
 
     static calculateOffset(blockDatId: number, previousBlockDatId: number, previousBlockOffset: number, previousBlockSize: number) {

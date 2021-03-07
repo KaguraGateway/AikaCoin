@@ -48,7 +48,7 @@ export class WalletTbl {
             if(db == null)
                 throw new Error("db is undefined.");
 
-            const pubkeyStr = PemUtils.getPublicKeyFromPem(data.pubkey);
+            const pubkeyStr = PemUtils.getRawPublicKeyFromPem(data.pubkey);
 
             db.serialize(() => {
                 const stmt = db.prepare("INSERT INTO wallet VALUES (?,?,?,?,?)");
@@ -126,6 +126,25 @@ export class WalletTbl {
                     return reject(err);
 
                 resolve(null);
+            });
+        });
+    }
+    static updateBalanceAndNonceWhereAddress(address: string, balance: number, nonce: number): Promise<null> {
+        return new Promise((resolve, reject) => {
+            const db = CoinDB.db;
+            if(db == null)
+                throw new Error("db is undefined.");
+
+            db.serialize(() => {
+                const stmt = db.prepare("UPDATE wallet SET balance = ? , nonce = ? where address = ?");
+                stmt.run([balance, nonce, address]);
+
+                stmt.finalize((err) => {
+                    if(err)
+                        return reject(err);
+
+                    resolve(null);
+                });
             });
         });
     }

@@ -1,11 +1,29 @@
 import { AikaCoin } from "../AikaCoin";
 import { BlockChain } from "./BlockChain";
+import { ITransaction } from "./interfaces/ITransaction";
 
 export class Pow {
-    private static readonly coinBaseAmount = 1000;
+    /**
+     * コインベースの報酬の初期値
+     * 注意：BANAIK単位
+     */
+    private static readonly coinBaseAmount = 1000000000;
 
     static getCoinBaseAmount(blockHeight: number) {
-        return this.coinBaseAmount >> (blockHeight / 50000);
+        return Math.floor(this.coinBaseAmount * ((1/2)**((blockHeight-1)/10000))) + 1000;
+    }
+
+    /**
+     * トランザクション手数料の合計を計算する
+     */
+    static getTransactionsFeeTotal(transactions: Array<ITransaction>) {
+        let fees = 0;
+
+        for(const tx of transactions) {
+            fees += tx.fee;
+        }
+
+        return fees;
     }
 
     static getNextWorkDifficult(blockHeight: number) {
@@ -41,7 +59,7 @@ export class Pow {
      * これはメインプロセスでしか動作しない
      */
     static isOthersCompletedFirst(currentBlockHeight: number) {
-        if(AikaCoin.blockChain.nextBlockHeight > (currentBlockHeight + 1)) {
+        if(AikaCoin.blockChain.getLastBlockHeight() > currentBlockHeight) {
             return true;
         }
 

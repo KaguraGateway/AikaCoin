@@ -9,7 +9,7 @@ const result1 = dat.write({
     timestamp: 1613799619,
     difficult: 6,
     nonce: -9007199247024231,
-    previousHash: "0000007cedc37cdf54a2f076bacb7751169ff47da16c0fd4e124dd681a4a45de",
+    previousHash: "0000000000000000000000000000000000000000000000000000000000000000",
     merkleRootHash: "000000b72a5d849df30b432bcf24983a808156e8e9699e2c15b1d90a95dbe4bf",
     stateRootHash: "000000b72a5d849df30b432bcf24983a808156e8e9699e2c15b1d90a95dbe4bf",
     miner: "$0x$ceff9bda5487b6a2121c85a851038f48236900d8",
@@ -36,7 +36,9 @@ const result2 = dat.write({
             from: "$0x$ceff9bda5487b6a2121c85a851038f48236900d8",
             fromPubKey: "MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAENEXC+JV1ekF2ExqU56fyADO/gDIuC+r8TSagPI2oNn7Jrq7Jg+UV13YHtw3wHeP3roFF2+PSUj5xsX2yi7JS5g==",
             amount: 1000,
+            fee: 1000,
             signature: "304502205cc3cb15055da643c4992ab8c4b653f0d95557e23a533d4f1e543c6e5285e9bc022100fbb229d45ae2bad0794a30067c5d628f2b50b5bc61f9b27f94320ca0858198ae",
+            transactionHash: "ceff9bda5487b6a2121c85a851038f48236900d8",
             commands: [
                 0x0
             ]
@@ -60,4 +62,4 @@ console.log(read2);
 // }
 
 // const dat = new BlockDat("C:\\Users\\yuchan\\.AikaCoinTest\\blocks\\0.dat");
-// console.log(dat.read(972));
+// console.log(dat.read(0));

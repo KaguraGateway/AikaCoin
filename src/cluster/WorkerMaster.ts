@@ -1,5 +1,6 @@
 import cluster from "cluster";
 import { Server, Socket } from "net";
+import { AikaCoin } from "../AikaCoin";
 import { Pow } from "../blockchain/Pow";
 
 export class WorkerMaster {
@@ -20,7 +21,7 @@ export class WorkerMaster {
         this.isForceKill = true;
     }
 
-    static computeSelfHash(message: IMasterOrderMessage): Promise<IWorkerMessage> {
+    static computeSelfHash(message: IMasterOrderMessage): Promise<IWorkerMessage | null> {
         return new Promise((resolve, reject) => {
             // 初期化
             this.reset();
@@ -34,9 +35,12 @@ export class WorkerMaster {
             // 先に他の人が終了させないか確認する
             this.workerTimers.push(setInterval(() => {
                 if(this.isForceKill || Pow.isOthersCompletedFirst(blockHeight)) {
+                    AikaCoin.miningLogger.info(`[Job Not Found]: Others Completed`);
                     for(const worker of workers) {
                         worker.process.kill();
                     }
+
+                    resolve(null);
                 }
             }, 1000));
 
@@ -72,6 +76,8 @@ export class WorkerMaster {
                         value.process.kill();
                     }
                 });
+                // リセット
+                this.reset();
                 // イベント解除
                 cluster.removeListener("message", onMessage);
                 // 終了

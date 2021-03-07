@@ -7,9 +7,7 @@ export const PeerToPeerOpcode = {
     ASK_START_P2P: 0x1,
     END_P2P: 0x2,
     ASK_END_P2P: 0x3,
-    PING: 0x4,
-    PONG: 0x5,
-    DATA: 0x6
+    DATA: 0x4
 };
 export type PeerToPeerOpcode = typeof PeerToPeerOpcode[keyof typeof PeerToPeerOpcode];
 
@@ -22,8 +20,10 @@ export class PeerToPeerService extends EventEmitter {
     /** 待受ポート番号 */
     port: number;
 
+    readonly sentPingSpan = 5000;
 
-    /** 接続先のノード value: `node://${IP}:${PORT}`  */
+
+    /** 接続先のノード value: `node://${ID}@${IP}:${PORT}`  */
     nodes: Array<string> = [];
 
     constructor(port: number) {
@@ -36,28 +36,58 @@ export class PeerToPeerService extends EventEmitter {
         this.socket.addListener("data", this.onMessage.bind(this));
     }
 
+    private pingCycle() {
+        for(const node of this.nodes) {
+            // アドレスを取得
+            const address = PeerToPeerService.getNodeAddressFromNodeURIFormat(node);
+            // 取得失敗？
+            if(address == null)
+                continue;
+
+            // PINGを送信する
+            this.socket.ping(address.nodeAddress, address.nodePort);
+        }
+
+        // 次のサイクルを準備
+        setTimeout(this.pingCycle.bind(this), this.sentPingSpan);
+    }
+
     private onMessage(data: Buffer, remoteAddr: string, remotePort: number) {
         // ヘッダー部分を取り出す
         const protocolVer = data.readUInt16BE(0);
         const opCode = data.readUInt8(2);
-
-        console.log(`P2P protocolVer: ${protocolVer}, opcode: ${opCode}`);
+        const payload = data.slice(4);
 
         switch(opCode) {
+            case PeerToPeerOpcode.DATA:
+                this.emit("data", payload, remoteAddr, remotePort);
+                break;
+
+
             case PeerToPeerOpcode.START_P2P:
-                if(AikaCoin.protocolVersion === protocolVer)
-                    this.sendTo(remoteAddr, remotePort, PeerToPeerOpcode.ASK_START_P2P);
+                const nodeId = payload.toString("utf-8");
+                AikaCoin.systemLogger.info(`[Request] Start P2P from ${remoteAddr}:${remotePort} (NodeID: ${nodeId})`);
+
+                if(AikaCoin.protocolVersion === protocolVer && nodeId === AikaCoin.config.myNodeId) {
+                    // PINGコマンド
+                    this.socket.ping(remoteAddr, remotePort);
+                    // P2P通信を始めましょうコマンド
+                    this.sendTo(remoteAddr, remotePort, PeerToPeerOpcode.ASK_START_P2P, Buffer.from(AikaCoin.config.myNodeId, "utf-8"));
+                    // ノードアドレスに変換
+                    const nodeAddress = PeerToPeerService.getNodeURIFormat(nodeId, remoteAddr, remotePort);
+                    // 接続リストに追加
+                    this.nodes.push(nodeAddress);
+                }
                 break;
             case PeerToPeerOpcode.ASK_START_P2P:
                 if(AikaCoin.protocolVersion === protocolVer)
-                    this.emit("start_p2p", remoteAddr, remotePort);
+                    this.emit("start_p2p", remoteAddr, remotePort, payload.toString("utf-8"));
                 break;
-            case PeerToPeerOpcode.START_P2P:
+
+
+            case PeerToPeerOpcode.END_P2P:
                 if(AikaCoin.protocolVersion === protocolVer)
                     this.sendTo(remoteAddr, remotePort, PeerToPeerOpcode.ASK_END_P2P);
-                break;
-            case PeerToPeerOpcode.DATA:
-                this.emit("data", data.slice(4), remoteAddr, remotePort);
                 break;
         }
     }
@@ -66,23 +96,34 @@ export class PeerToPeerService extends EventEmitter {
      * 通信を受け取れるようにする（サーバー機能を起動する）
      */
     startSocket() {
+        // ソケットを開く
         this.socket.start();
+
+        // PINGサイクル
+        this.pingCycle();
     }
 
     /**
      * 特定のノードをP2P通信を開始する
      */
-    async startP2P(nodeAddress: string, nodePort: number) {
+    async startP2P(nodeId: string, nodeAddress: string, nodePort: number) {
         return new Promise((resolve, reject) => {
+            // タイムアウト
+            const timeoutTimer = setTimeout(() => { resolve("TIMEOUT") }, 5000);
+
             // イベント登録
-            const eventFuc = (remoteAddr: string, remotePort: number) => {console.log(remoteAddr, remotePort);
-                if(nodeAddress === remoteAddr && nodePort === remotePort) {
+            const eventFuc = (remoteAddr: string, remotePort: number, responseNodeId: string) => {
+                AikaCoin.systemLogger.info(`Resoponse StartP2P: ${remoteAddr} ${remotePort} (NodeId: ${responseNodeId})`);
+
+                if(responseNodeId === nodeId) {
                     // ノードURL
-                    const nodeURI = PeerToPeerService.getNodeURIFormat(nodeAddress, nodePort);
+                    const nodeURI = PeerToPeerService.getNodeURIFormat(nodeId, nodeAddress, nodePort);
                     // ノードリストに追加
                     this.nodes.push(nodeURI);
                     // イベント登録を削除
                     this.removeListener("start_p2p", eventFuc);
+                    // タイマー解除
+                    clearTimeout(timeoutTimer);
 
                     resolve(nodeURI);
                 }
@@ -92,7 +133,7 @@ export class PeerToPeerService extends EventEmitter {
             // ダミーデータ
             this.socket.ping(nodeAddress, nodePort);
             // 送信する
-            this.sendTo(nodeAddress, nodePort, PeerToPeerOpcode.START_P2P);
+            this.sendTo(nodeAddress, nodePort, PeerToPeerOpcode.START_P2P, Buffer.from(nodeId, "utf-8"));
         });
     }
 
@@ -129,19 +170,21 @@ export class PeerToPeerService extends EventEmitter {
         return this.sendTo(toAddress, toPort, PeerToPeerOpcode.DATA, payload);
     }
 
-    static getNodeURIFormat(nodeAddress: string, nodePort: number) {
-        return `node://${nodeAddress}:${nodePort}`;
+    static getNodeURIFormat(nodeId: string, nodeAddress: string, nodePort: number) {
+        return `node://${nodeId}@${nodeAddress}:${nodePort}`;
     }
     static getNodeAddressFromNodeURIFormat(nodeURI: string) {
         // 分割
-        const nodeMatch = nodeURI.match(/^node:\/\/(.*?):([\d]{5})$/);console.log(nodeMatch);
+        const nodeMatch = nodeURI.match(/^node:\/\/(.*?)@(.*?):([\d]{5})$/);
         if(nodeMatch == null)
             return null;
+        // ID取得
+        const nodeId = nodeMatch[1];
         // IP取得
-        const nodeAddress = nodeMatch[1];
+        const nodeAddress = nodeMatch[2];
         // ポート番号取得
-        const nodePort = Number(nodeMatch[2]);
+        const nodePort = Number(nodeMatch[3]);
 
-        return {nodeAddress, nodePort};
+        return {nodeId, nodeAddress, nodePort};
     }
 }

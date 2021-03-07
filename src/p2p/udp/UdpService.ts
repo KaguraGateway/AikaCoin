@@ -1,6 +1,7 @@
 import { typeCheckUtils } from "@kaguragateway/y-node-utils";
 import dgram, { RemoteInfo } from "dgram";
 import EventEmitter from "events";
+import { AikaCoin } from "../../AikaCoin";
 
 export const UdpOpcode = {
     SEND_DATA: 0x1,
@@ -65,15 +66,15 @@ export class SuperHybridUdp extends EventEmitter {
 
     private onListeningv4() {
         const address = this.socketv4.address();
-        console.log(`UDP Socket listening on: ${address.address}:${address.port} (${address.family})`);
+        AikaCoin.systemLogger.info(`UDP Socket listening on: ${address.address}:${address.port} (${address.family})`);
     }
     private onListeningv6() {
         const address = this.socketv6.address();
-        console.log(`UDP Socket listening on: ${address.address}:${address.port} (${address.family})`);
+        AikaCoin.systemLogger.info(`UDP Socket listening on: ${address.address}:${address.port} (${address.family})`);
     }
 
     private onMessageCommon(buf: Buffer, remote: RemoteInfo) {
-        console.log(`onMessage: ${remote.address}:${remote.port} (${remote.family})`);
+        //console.log(`onMessage: ${remote.address}:${remote.port} (${remote.family})`);
         // 送られてきたアドレス
         const remoteAddr = remote.address;
         const remotePort = remote.port;
@@ -85,9 +86,9 @@ export class SuperHybridUdp extends EventEmitter {
         // OPCODEを読み取る
         const opcode = firstByte & 0x0F;
 
-        console.log(`protocol Ver: ${protocolVer}, opcode: ${opcode}`);
-        console.log(`size: ${buf.length}`);
-        console.log(buf);
+        // console.log(`protocol Ver: ${protocolVer}, opcode: ${opcode}`);
+        // console.log(`size: ${buf.length}`);
+        // console.log(buf);
 
         switch(opcode) {
             // Data
@@ -98,11 +99,25 @@ export class SuperHybridUdp extends EventEmitter {
                 this.emit("data", payload, remoteAddr, remotePort);
 
                 break;
+
+            // PING
+            case UdpOpcode.PING:
+                // PONG返す
+                this.pong(remoteAddr, remotePort);
+                break;
+
+            // PONG
+            case UdpOpcode.PONG:
+                this.emit("pong");
+                break;
         }
     }
 
     ping(toAddress: string, toPort: number) {
         return this.sendTo(toAddress, toPort, UdpOpcode.PING);
+    }
+    pong(toAddress: string, toPort: number) {
+        return this.sendTo(toAddress, toPort, UdpOpcode.PONG);
     }
 
     sendTo(toAddress: string, toPort: number, opcode: UdpOpcode, payload?: Buffer, addHeaderBuf?: Buffer) {
@@ -114,9 +129,6 @@ export class SuperHybridUdp extends EventEmitter {
         // 無効なIPなら弾く
         if(isFamily === "invalid")
             throw new Error(`Invalid IPAddress ${toAddress}`);
-        // 無効なポートも弾く
-        if(toPort < 49152 || toPort > 65535)
-            throw new Error(`Invalid Port ${toPort} (Port Range: 49152-65535)`);
 
         // 合ったソケットを取得する
         const socket = isFamily === "ipv6" ? this.socketv6 : this.socketv4;

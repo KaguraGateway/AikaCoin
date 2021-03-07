@@ -20,6 +20,12 @@ export interface ITransaction {
     /** トランザクションの状態 */
     status: TransactionStatus;
 
+    /** このトランザクションの手数料 */
+    fee: number;
+
+    /** このトランザクションのハッシュ */
+    transactionHash: string;
+
     /** トランザクションのコマンド */
     commands: Array<TransactionCommand>;
 }

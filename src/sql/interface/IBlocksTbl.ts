@@ -4,4 +4,5 @@ export interface IBlocksTbl {
     dat: number;
     offset: number;
     size: number;
+    previousHash: string;
 }

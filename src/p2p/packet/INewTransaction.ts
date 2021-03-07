@@ -17,6 +17,9 @@ export interface INewTransaction {
         /** 送金者の取引回数 */
         nonce: number;
 
+        /** トランザクションハッシュ */
+        transactionHash: string;
+
         /** トランザクションのコマンド */
         commands: Array<TransactionCommand>;
 }

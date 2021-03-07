@@ -28,7 +28,7 @@ export class Wallet {
                     this.generateWalletKeyPair(answer)
                     .then(() => {
                         // ウォレット生成トランザクションを送信する
-                        AikaCoin.newTransaction("", 0, [TransactionCommand.CREATE_WALLET], answer);
+                        AikaCoin.newTransaction("CMDONLY", 0, [TransactionCommand.CREATE_WALLET], answer);
 
                         resolve(null);
                     })
@@ -112,6 +112,6 @@ export class Wallet {
 
     /** ウォレットアドレスを生成する */
     public static generateWalletAddress(publicKey: string) {
-        return "$0x$" + HashUtils.computeRIPEMD160(HashUtils.computeSHA256(PemUtils.getPublicKeyFromPem(Wallet.walletPublicKey)));
+        return "$0x$" + HashUtils.computeRIPEMD160(HashUtils.computeSHA256(PemUtils.getRawPublicKeyFromPem(Wallet.walletPublicKey)));
     }
 }

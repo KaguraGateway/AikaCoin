@@ -13,6 +13,10 @@ import { PeerToPeerService } from "./p2p/PeerToPeerService";
 import { AikaCoinNetwork } from "./p2p/AikaCoinNetwork";
 import { WalletTbl } from "./sql/sqlite/WalletTbl";
 import { TransactionCommand } from "./blockchain/interfaces/ITransaction";
+import { LevelDb } from "./leveldb/LevelDb";
+import { DatInfoDb } from "./leveldb/DatInfoDb";
+import { Logger } from "./Logger";
+import { TransactionIndexDb } from "./leveldb/TransactionIndexDb";
 
 export class AikaCoin {
     /** AikaCoin プロトコルバージョン */
@@ -39,16 +43,22 @@ export class AikaCoin {
     static wallet: Wallet;
     static blockChain: BlockChain;
     static coinDb: CoinDB;
+    static datInfo: DatInfoDb;
+    static txIndex: TransactionIndexDb;
     static network: AikaCoinNetwork;
 
     // リードラインを作成
     static std = readline.createInterface({input: process.stdin, output: process.stdout});
 
+    // ロガー
+    static readonly systemLogger = new Logger();
+    static readonly miningLogger = new Logger();
+
     async init() {
         // AikaCoinのディレクトリをホームディレクトリにつくる
         await fileUtils.createDir(AikaCoin.homeDir, AikaCoin.aikaCoinDirName);
 
-        console.log(`Created AikaCoin Dir: ${AikaCoin.aikaCoinDir}`);
+        AikaCoin.systemLogger.info(`Created AikaCoin Dir: ${AikaCoin.aikaCoinDir}`);
 
         // blocksディレクトリを生成
         await fileUtils.createDir(AikaCoin.aikaCoinDir, "blocks");
@@ -56,23 +66,37 @@ export class AikaCoin {
         // Configを読み込む
         AikaCoin.config = new Config();
 
+        // LevelDBを読み込む
+        AikaCoin.datInfo = new DatInfoDb(AikaCoin.config.datDbPath);
+        AikaCoin.txIndex = new TransactionIndexDb(AikaCoin.config.txIndexDbPath);
+
         // データベースを読み込む
         AikaCoin.coinDb = new CoinDB();
         await AikaCoin.coinDb.init(AikaCoin.config.sqlitePath);
 
-        // P2P起動
-        AikaCoin.network = new AikaCoinNetwork(AikaCoin.config.port);
-        AikaCoin.network.start();
+        AikaCoin.systemLogger.info("Starting BlockChain...");
 
         // ブロックチェーンシステムを起動
         AikaCoin.blockChain = new BlockChain();
+
+        AikaCoin.systemLogger.info("Starting Network...");
+
+        // P2P起動
+        AikaCoin.network = new AikaCoinNetwork(AikaCoin.config.port);
+        await AikaCoin.network.start();
+
+        // ネットワーク状態を表示
+        AikaCoin.systemLogger.info(`P2P Network: ${AikaCoin.network.p2p.nodes.length} Peer`);
+
+        // P2Pネットワークから過去データを取得
+        await AikaCoin.network.requestPastBlocks({blockhash: AikaCoin.blockChain.previousHash});
+
+        AikaCoin.systemLogger.info("Starting Wallet...")
 
         // ウォレット
         AikaCoin.wallet = new Wallet();
         // ウォレットを読み込む
         await AikaCoin.wallet.init();
-
-
 
         /**
          * 準備パート２
@@ -82,8 +106,20 @@ export class AikaCoin {
 
         this.mining()
         .catch((e) => {
-            console.log(e);
+            AikaCoin.systemLogger.error(e);
         });
+
+        for await (const val of AikaCoin.std) {
+            switch(val) {
+                case "wallet":
+                    const myWallet = await WalletTbl.selectWhereAddress(Wallet.walletAddress);
+                    myWallet != null ? AikaCoin.systemLogger.info(`My Wallet Info\nBalance: ${myWallet.balance} BANAIK (Nonce: ${myWallet.nonce})`) : console.log("Not Found My Wallet");
+                    break;
+                case "peer":
+                    AikaCoin.systemLogger.info(`Peer: ${AikaCoin.network.p2p.nodes.length}`);
+                    break;
+            }
+        }
     }
 
     async mining() {
@@ -119,6 +155,7 @@ export class AikaCoin {
             amount: transaction.amount,
             signature: transaction.signature,
             nonce: transaction.nonce,
+            transactionHash: transaction.transactionHash,
             commands: transaction.commands
         });
     }

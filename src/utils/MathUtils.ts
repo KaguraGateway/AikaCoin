@@ -29,4 +29,8 @@ export class MathUtils {
         });
         return (average / array.length);
     }
+
+    static orgFloor(value: number, base: number) {
+        return Math.floor(value * base) / base;
+    }
 }
